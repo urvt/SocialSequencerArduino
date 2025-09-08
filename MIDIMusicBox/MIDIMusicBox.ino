@@ -67,11 +67,14 @@ double cubeType = 0;
 volatile bool shouldReset = false;
 volatile unsigned long lastInterruptTime = 0;
 
-int potentiometer = A0; //Assign to pin A0
+int potTempo = A0; //Assign to pin A0
+int potReverb = A2;
 int resetButton = 2; //digitalPin for the interrupt
-int sensor_value = 0;
-int delay_speed = 500;
-float delay_speed_seconds;
+int pot_tempo_value = 0;
+int pot_reverb_value = 0;
+int pot_reverb_value_last = 0;
+int delay_time = 500;
+float delay_time_seconds;
 int bpm;
 
 //// Interrupt service routine to handle button press
@@ -167,6 +170,18 @@ void onNoteOn(int boardIndex, int row,  int cubeType) {
 void silencePrevNotes(int boardIndex, int row, int cubeType) {
   noteOff(1, midiNotes[boardIndex][cubeType][row]);
 }
+
+void setReverbValue() {
+  pot_reverb_value = analogRead(potReverb);
+  if (abs(pot_reverb_value_last - pot_reverb_value) > 1) {
+    
+    Serial.write(0xB0);
+    Serial.write(91);
+    Serial.write(map(pot_reverb_value, 0, 1023, 0, 127));
+  }
+  pot_reverb_value_last = pot_reverb_value;
+}
+
 void onTick() {
   int boardIndex = 0;
   /*int activeChange = 0;
@@ -179,12 +194,15 @@ void onTick() {
     getRawData(0x33);
     activeChange = 8;
   }*/
-  if (millis() - prev_millis >= delay_speed) {
+  if (millis() - prev_millis >= delay_time) {
     prev_millis = millis();
     // on beat do stuff
     //int boardIndex = 0;
     //onNoteOff(boardIndex, activeRow);
     //onNoteOn(boardIndex, activeRow, cubeType);
+
+    setReverbValue();
+    
     for (int i = 0; i < 5; i++) {
       //atkomentuoti, kai nebetestuosiu su 2 lentom:
       cubeType = getActiveCube(raw_seq_col_data[i][7 - activeRow], seq_col_data[boardIndex][i][7 - activeRow]);
@@ -243,7 +261,9 @@ void setup() {
   lcd.print("TEMPO: ");
   lcd.setCursor(13, 1);
   lcd.print("BPM");
-  pinMode(potentiometer, INPUT); //Sets the pinmode to input
+  
+  pinMode(potTempo, INPUT); //Sets the pinmode to input
+  pinMode(potReverb, INPUT); //Sets the pinmode to input
   pinMode(resetButton, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(resetButton), resetArduino, FALLING);  // Interrupt on button press (falling edge)
   Wire.begin();        // join i2c bus (address optional for master)
@@ -251,6 +271,9 @@ void setup() {
   //Serial.begin(115200);  // start serial for Monitor output
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);  // GRB ordering is typical
   //FastLED.addLeds<WS2812B, LED2_PIN, GRB>(leds2, NUM_LEDS);  // GRB ordering is typical
+
+  pot_reverb_value_last = analogRead(potReverb);
+  
   delay(1000);
   storeRawData();
   delay(1000);
@@ -265,17 +288,21 @@ void loop() {
       // Wait for watchdog to reset the Arduino
     }
   }
-  
-  sensor_value = analogRead(potentiometer);
-  delay_speed = map(sensor_value, 0, 1023, 500, 166); //MAP delay time (for BPM)
-  delay_speed_seconds = delay_speed / 1000.0f;
-  bpm = 60 / delay_speed_seconds / 2;
+
+  pot_tempo_value = analogRead(potTempo);
+  delay_time = map(pot_tempo_value, 0, 1023, 500, 166); //MAP delay time (for BPM)
+  delay_time_seconds = delay_time / 1000.0f;
+  bpm = 60 / delay_time_seconds / 2;
   if (bpm < 100) {
     lcd.setCursor(9, 1);
     lcd.print(" ");
   }
   lcd.setCursor(7, 1);
   lcd.print(bpm);
+
+  //pot_reverb_value = analogRead(potReverb);
+  //Serial.println(pot_reverb_value);
+  //delay(200);
   
   //getRawData(0x31);
   getRawData(0x33);
