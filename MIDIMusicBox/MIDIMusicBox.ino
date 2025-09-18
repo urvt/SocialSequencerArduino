@@ -3,7 +3,8 @@ Ugniaus pakeitimai 2025-04:
 * BPM skaičiavimas pagal delay
 * Potenciometras nustatantis tempo (BPM)
 * LCD ekraniukas
-
+Ugniaus ir Adomo pakeitimai 2025-09:
+* Reverb potenciometras
 */
 
 #include <avr/wdt.h>
@@ -18,7 +19,7 @@ LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27,16,2);
 #define NUM_LEDS 24
 #define CUBE_TYPE_COUNT 2
 #define ROW_COUNT 5
-//#define BPM 2000 // 500ms = 120BPM
+//#define BPM 2000 // 500ms = 120BPM in 8th notes, 60BPM in quarter notes
 CRGB leds[NUM_LEDS];
 //CRGB leds2[NUM_LEDS];
 
@@ -60,6 +61,8 @@ uint8_t cmd(0), cmd_len(1);
 uint8_t SlaveAddr[3] = {0x33, 0x32, 0x31};
 unsigned long prev_millis = 0;
 unsigned long current_millis = 0;
+unsigned long prev_millis_fx_change = 0;
+bool fx_changed = false;
 int id = 0;
 uint8_t activeRow = 0;
 double cubeType = 0;
@@ -67,14 +70,23 @@ double cubeType = 0;
 volatile bool shouldReset = false;
 volatile unsigned long lastInterruptTime = 0;
 
-int potTempo = A0; //Assign to pin A0
-int potReverb = A2;
+int potReverb = A0;
+int potTempo = A1; //Assign to pin A0
+int potDelay1 = A3;
+int potDelay2 = A2;
 int resetButton = 2; //digitalPin for the interrupt
 int pot_tempo_value = 0;
 int pot_reverb_value = 0;
-int pot_reverb_value_last = 0;
-int delay_time = 500;
-float delay_time_seconds;
+int pot_delay1_value = 0;
+int pot_delay2_value = 0;
+int reverb_value = 0;
+int reverb_value_last = 0;
+int delay1_value = 0;
+int delay1_value_last = 0;
+int delay2_value = 0;
+int delay2_value_last = 0;
+int tempo_delay_time = 500;
+float tempo_delay_time_seconds;
 int bpm;
 
 //// Interrupt service routine to handle button press
@@ -171,15 +183,104 @@ void silencePrevNotes(int boardIndex, int row, int cubeType) {
   noteOff(1, midiNotes[boardIndex][cubeType][row]);
 }
 
+void midiControlSend(byte channel, byte ctrl, byte ctrl_value) {
+  Serial.write(channel);
+  Serial.write(ctrl);
+  Serial.write(ctrl_value);
+}
+
+void setDelay1Value() {
+  pot_delay1_value = analogRead(potDelay1);
+  delay1_value = map(pot_delay1_value, 0, 1023, 0, 127);
+  if (abs(delay1_value_last - delay1_value) > 1) {
+    midiControlSend(0xB0, 92, delay1_value);
+  }
+  delay1_value_last = delay1_value;
+}
+
+void setDelay2Value() {
+  pot_delay2_value = analogRead(potDelay2);
+  delay2_value = map(pot_delay2_value, 0, 1023, 0, 127);
+  if (abs(delay2_value_last - delay2_value) > 1) {
+    midiControlSend(0xB0, 93, delay2_value);
+  }
+  delay2_value_last = delay2_value;
+}
+
 void setReverbValue() {
   pot_reverb_value = analogRead(potReverb);
-  if (abs(pot_reverb_value_last - pot_reverb_value) > 1) {
-    
-    Serial.write(0xB0);
-    Serial.write(91);
-    Serial.write(map(pot_reverb_value, 0, 1023, 0, 127));
+  reverb_value = map(pot_reverb_value, 0, 1023, 0, 127);
+  if (abs(reverb_value_last - reverb_value) > 1) {
+
+    midiControlSend(0xB0, 91, reverb_value);
+
+    /*lcd.setCursor(0, 1);
+    lcd.print("REVERB: ");
+    lcd.setCursor(8, 1);
+    lcd.print(reverb_value);
+    if (reverb_value < 100) {
+      lcd.setCursor(10, 1);
+      lcd.print(" ");
+    }
+    lcd.setCursor(13, 1);
+    lcd.print("   ");
+
+    prev_millis_fx_change = millis();
+    fx_changed = true;*/
   }
-  pot_reverb_value_last = pot_reverb_value;
+  reverb_value_last = reverb_value;
+}
+
+void setTempoValue() {
+  pot_tempo_value = analogRead(potTempo);
+  // 500 tempo_delay_time --> 60 BPM
+  // 166 tempo_delay_time --> 180 BPM
+  tempo_delay_time = map(pot_tempo_value, 0, 1023, 500, 40); //MAP delay time (for BPM)
+  tempo_delay_time_seconds = tempo_delay_time / 1000.0f;
+  bpm = 60 / tempo_delay_time_seconds / 2;
+
+  /*if ((millis() - prev_millis_fx_change > 750) || (!fx_changed)) {
+    lcd.setCursor(0, 1);
+    lcd.print("TEMPO: ");
+    lcd.setCursor(13, 1);
+    lcd.print("BPM");
+    if (bpm < 100) {
+      lcd.setCursor(9, 1);
+      lcd.print(" ");
+    }
+    lcd.setCursor(7, 1);
+    lcd.print(bpm);
+    lcd.setCursor(10, 1);
+    lcd.print("   ");
+    fx_changed = false;
+  }*/
+}
+
+void printNumberToLCD(int num) {
+  if (num > 99) {
+    lcd.print(num);
+  } else if(num > 9) {
+    lcd.print(" ");
+    lcd.print(num);
+  } else {
+    lcd.print("  ");
+    lcd.print(num);
+  }
+}
+
+void printInfoToLCD() {
+  lcd.setCursor(0, 0); //stulpelis, eilutė
+  lcd.print("T:");
+  printNumberToLCD(bpm);
+  lcd.print("  ");
+  lcd.print("R:");
+  printNumberToLCD(reverb_value);
+  lcd.setCursor(0, 1); //stulpelis, eilutė
+  lcd.print("D1:");
+  printNumberToLCD(delay1_value);
+  lcd.print(" ");
+  lcd.print("D2:");
+  printNumberToLCD(delay2_value);
 }
 
 void onTick() {
@@ -194,7 +295,7 @@ void onTick() {
     getRawData(0x33);
     activeChange = 8;
   }*/
-  if (millis() - prev_millis >= delay_time) {
+  if (millis() - prev_millis >= tempo_delay_time) {
     prev_millis = millis();
     // on beat do stuff
     //int boardIndex = 0;
@@ -202,6 +303,8 @@ void onTick() {
     //onNoteOn(boardIndex, activeRow, cubeType);
 
     setReverbValue();
+    setDelay1Value();
+    setDelay2Value();
     
     for (int i = 0; i < 5; i++) {
       //atkomentuoti, kai nebetestuosiu su 2 lentom:
@@ -250,55 +353,44 @@ void onTick() {
     if (activeRow > 7) { //15
       activeRow = 0;
     }
+    printInfoToLCD();
   }
 }
 void setup() {
   lcd.init();          // Initiate the LCD module
   lcd.backlight();     // Turn on the backlight
   lcd.setCursor(0, 0); //stulpelis, eilutė
-  lcd.print("LinkMenu Beats");
+  lcd.print("LinkMenuMusicBox:");
   lcd.setCursor(0, 1);
-  lcd.print("TEMPO: ");
-  lcd.setCursor(13, 1);
-  lcd.print("BPM");
+  lcd.print("Social Sequencer");
   
   pinMode(potTempo, INPUT); //Sets the pinmode to input
   pinMode(potReverb, INPUT); //Sets the pinmode to input
   pinMode(resetButton, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(resetButton), resetArduino, FALLING);  // Interrupt on button press (falling edge)
+  //attachInterrupt(digitalPinToInterrupt(resetButton), resetArduino, FALLING);  // Interrupt on button press (falling edge)
   Wire.begin();        // join i2c bus (address optional for master)
   Serial.begin(31250);  // start serial for MIDI output
   //Serial.begin(115200);  // start serial for Monitor output
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);  // GRB ordering is typical
   //FastLED.addLeds<WS2812B, LED2_PIN, GRB>(leds2, NUM_LEDS);  // GRB ordering is typical
-
-  pot_reverb_value_last = analogRead(potReverb);
   
   delay(1000);
   storeRawData();
   delay(1000);
+  lcd.clear();
 }
 
 void loop() {
 
-  if (shouldReset) {
+  /*if (shouldReset) {
     cli(); // Disable interrupts just in case
     wdt_enable(WDTO_15MS); // Trigger watchdog reset safely
     while (1) {
       // Wait for watchdog to reset the Arduino
     }
-  }
+  }*/
 
-  pot_tempo_value = analogRead(potTempo);
-  delay_time = map(pot_tempo_value, 0, 1023, 500, 166); //MAP delay time (for BPM)
-  delay_time_seconds = delay_time / 1000.0f;
-  bpm = 60 / delay_time_seconds / 2;
-  if (bpm < 100) {
-    lcd.setCursor(9, 1);
-    lcd.print(" ");
-  }
-  lcd.setCursor(7, 1);
-  lcd.print(bpm);
+  setTempoValue();
 
   //pot_reverb_value = analogRead(potReverb);
   //Serial.println(pot_reverb_value);
